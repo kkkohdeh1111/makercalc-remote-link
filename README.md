@@ -3,18 +3,18 @@
 Conecta tu impresora a [MakerCalc](https://makercalc.app) cuando tu Moonraker es
 una versión vieja que **no habla TLS** (cifrado).
 
-Es un instalador chico y transparente. **Leelo antes de correrlo** — son ~60
-líneas en castellano.
+Es un instalador chico y transparente. **Leelo antes de correrlo** — el puente
+son ~40 líneas de Python (`mkc-bridge.py`), stdlib pura.
 
 ## ¿Qué hace?
 
-Levanta un *puente* local con [`stunnel`](https://www.stunnel.org/) (herramienta
-estándar, en los repos de Debian):
+Levanta un *puente* local en **Python puro** (`mkc-bridge.py`, sin instalar
+ningún paquete — usa el `python3` que ya tenés):
 
 1. Encuentra tu `moonraker.conf`
-2. Instala `stunnel`
-3. Configura el puente: escucha local en `127.0.0.1:1883` y reenvía **cifrado
-   (TLS)** a `mqtt.makercalc.app:8883`, verificando el certificado del broker
+2. Instala el puente como servicio (`mkc-bridge`) con el python del sistema
+3. El puente escucha local en `127.0.0.1:1883` y reenvía **cifrado (TLS)** a
+   `mqtt.makercalc.app:8883`, verificando el certificado del broker
 4. Apunta Moonraker al puente (cambia `address` y `port` **solo** dentro de
    `[mqtt]`), con backup en `moonraker.conf.mkc-bak`
 5. Reinicia Moonraker
@@ -55,8 +55,9 @@ impresora queda **exactamente** como estaba.
 
 - **Open source** — este mismo código es lo que corre. Sin binarios, sin humo.
 - **Reversible** — backup automático + `uninstall.sh`.
-- **Herramienta estándar** — `stunnel`, usada en producción hace 20 años.
-- **Mínimo privilegio** — solo lo necesario para instalar un paquete y editar
+- **Sin dependencias** — el puente es Python stdlib puro, no instala paquetes
+  (anda hasta en placas viejas con `apt` roto/EOL).
+- **Mínimo privilegio** — solo lo necesario para instalar un servicio y editar
   dos líneas de config.
 
 ## Licencia

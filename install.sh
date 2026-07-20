@@ -6,28 +6,29 @@
 #   cd makercalc-remote-link && ./install.sh
 #
 # Para impresoras con un Moonraker viejo que no habla TLS. Levanta un puente
-# local (stunnel): Moonraker conecta en claro a 127.0.0.1 —dentro de la placa,
-# nunca sale a la red— y stunnel lo envuelve en TLS hacia el broker.
+# local en Python puro (mkc-bridge.py): Moonraker conecta en claro a
+# 127.0.0.1 —dentro de la placa, nunca sale a la red— y el puente lo envuelve
+# en TLS hacia el broker.
 #
-# NO toca tu token (vive en moonraker.conf y viaja siempre sellado).
-# NO abre puertos en tu router. NO toca Klipper. Deja backup y es reversible
-# (./uninstall.sh). Idempotente: podés correrlo varias veces.
+# NO instala paquetes. NO toca tu token (vive en moonraker.conf y viaja
+# siempre sellado). NO abre puertos en tu router. NO toca Klipper. Deja backup
+# y es reversible (./uninstall.sh). Idempotente: podés correrlo varias veces.
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-BROKER_HOST="mqtt.makercalc.app"
-BROKER_PORT="8883"
 LOCAL_PORT="1883"
-STUNNEL_CONF="/etc/stunnel/makercalc.conf"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BRIDGE_DST="/usr/local/bin/mkc-bridge.py"
+UNIT="/etc/systemd/system/mkc-bridge.service"
 
 log() { printf '\033[1;36m[MakerCalc]\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m[MakerCalc]\033[0m %s\n' "$*" >&2; }
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
-  command -v sudo >/dev/null 2>&1 || { err "Necesito root o sudo para instalar stunnel."; exit 1; }
+  command -v sudo >/dev/null 2>&1 || { err "Necesito root o sudo."; exit 1; }
   SUDO="sudo"
-  log "Voy a pedir tu contraseña (sudo) para instalar stunnel y editar la config."
+  log "Voy a pedir tu contraseña (sudo) para instalar el servicio del puente."
 fi
 
 # 1 ── Ubicar moonraker.conf ────────────────────────────────────────────────
@@ -49,52 +50,50 @@ grep -q '^\[mqtt\]' "$CONF" || {
 }
 log "Config encontrada: $CONF"
 
-# 2 ── Instalar stunnel ─────────────────────────────────────────────────────
-if ! command -v stunnel >/dev/null 2>&1 && ! command -v stunnel4 >/dev/null 2>&1; then
-  log "Instalando el puente (stunnel)…"
-  export DEBIAN_FRONTEND=noninteractive
-  $SUDO apt-get update -qq
-  $SUDO apt-get install -y -qq stunnel4 >/dev/null
-else
-  log "stunnel ya está instalado."
-fi
-
-# 3 ── Bundle de certificados CA (para verificar que el broker es el real) ───
-CAFILE=""
-for c in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
-  [ -f "$c" ] && CAFILE="$c" && break
+# 2 ── Detectar un python3 (sin instalar nada) ──────────────────────────────
+PY=""
+for p in /usr/bin/python3 /usr/local/bin/python3 /home/*/moonraker-env/bin/python; do
+  [ -x "$p" ] && PY="$p" && break
 done
-[ -n "$CAFILE" ] || { err "No encontré el bundle de certificados CA del sistema."; exit 1; }
+[ -n "$PY" ] || { err "No encontré python3 en el sistema."; exit 1; }
+log "Usando python: $PY"
 
-# 4 ── Escribir la config del puente ────────────────────────────────────────
-log "Configurando el puente TLS…"
-$SUDO tee "$STUNNEL_CONF" >/dev/null <<EOF
-# MakerCalc Remote Link — puente TLS. Generado por install.sh.
-[mqtt-makercalc]
-client = yes
-accept = 127.0.0.1:${LOCAL_PORT}
-connect = ${BROKER_HOST}:${BROKER_PORT}
-verifyChain = yes
-CAfile = ${CAFILE}
-checkHost = ${BROKER_HOST}
-sni = ${BROKER_HOST}
+# 3 ── Instalar el puente + servicio ────────────────────────────────────────
+log "Instalando el puente (Python puro, sin paquetes)…"
+$SUDO cp "$SCRIPT_DIR/mkc-bridge.py" "$BRIDGE_DST"
+$SUDO chmod +x "$BRIDGE_DST"
+
+$SUDO tee "$UNIT" >/dev/null <<EOF
+[Unit]
+Description=MakerCalc Remote Link TLS bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$PY $BRIDGE_DST
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
-[ -f /etc/default/stunnel4 ] && $SUDO sed -i 's/^ENABLED=0/ENABLED=1/' /etc/default/stunnel4 || true
-$SUDO systemctl enable stunnel4 >/dev/null 2>&1 || true
-$SUDO systemctl restart stunnel4
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable mkc-bridge >/dev/null 2>&1 || true
+$SUDO systemctl restart mkc-bridge
 
 for _ in $(seq 1 10); do
   ss -ltn 2>/dev/null | grep -q "127.0.0.1:${LOCAL_PORT}" && break
   sleep 1
 done
 ss -ltn 2>/dev/null | grep -q "127.0.0.1:${LOCAL_PORT}" || {
-  err "El puente no quedó escuchando en ${LOCAL_PORT}. Revisá:  systemctl status stunnel4"
+  err "El puente no quedó escuchando en ${LOCAL_PORT}. Revisá:  systemctl status mkc-bridge"
   exit 1
 }
-log "Puente activo: 127.0.0.1:${LOCAL_PORT}  →  ${BROKER_HOST}:${BROKER_PORT} (TLS)"
+log "Puente activo: 127.0.0.1:${LOCAL_PORT}  →  mqtt.makercalc.app:8883 (TLS)"
 
-# 5 ── Apuntar Moonraker al puente (solo dentro de [mqtt]) ───────────────────
+# 4 ── Apuntar Moonraker al puente (solo dentro de [mqtt]) ───────────────────
 log "Apuntando Moonraker al puente (backup en ${CONF}.mkc-bak)…"
 $SUDO cp "$CONF" "${CONF}.mkc-bak"
 $SUDO awk -v lp="$LOCAL_PORT" '
@@ -105,7 +104,7 @@ $SUDO awk -v lp="$LOCAL_PORT" '
   { print }
 ' "$CONF" > /tmp/mkc-moonraker.tmp && $SUDO cp /tmp/mkc-moonraker.tmp "$CONF" && rm -f /tmp/mkc-moonraker.tmp
 
-# 6 ── Reiniciar Moonraker ──────────────────────────────────────────────────
+# 5 ── Reiniciar Moonraker ──────────────────────────────────────────────────
 log "Reiniciando Moonraker…"
 $SUDO systemctl restart moonraker 2>/dev/null || $SUDO systemctl restart moonraker.service 2>/dev/null || true
 

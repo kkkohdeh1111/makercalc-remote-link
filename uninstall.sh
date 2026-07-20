@@ -2,14 +2,14 @@
 # ─────────────────────────────────────────────────────────────────────────
 # MakerCalc Remote Link — desinstalador
 # Deshace todo lo que hizo install.sh: restaura tu moonraker.conf desde el
-# backup, borra el puente stunnel y reinicia. Deja tu impresora como estaba.
+# backup, para y borra el puente, y reinicia. Deja tu impresora como estaba.
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-STUNNEL_CONF="/etc/stunnel/makercalc.conf"
+BRIDGE_DST="/usr/local/bin/mkc-bridge.py"
+UNIT="/etc/systemd/system/mkc-bridge.service"
 
 log() { printf '\033[1;36m[MakerCalc]\033[0m %s\n' "$*"; }
-err() { printf '\033[1;31m[MakerCalc]\033[0m %s\n' "$*" >&2; }
 
 SUDO=""
 [ "$(id -u)" -ne 0 ] && SUDO="sudo"
@@ -31,12 +31,11 @@ else
   log "No hay backup .mkc-bak — dejo moonraker.conf sin tocar."
 fi
 
-# 2 ── Borrar el puente stunnel ─────────────────────────────────────────────
-if [ -f "$STUNNEL_CONF" ]; then
-  log "Borrando el puente TLS…"
-  $SUDO rm -f "$STUNNEL_CONF"
-  $SUDO systemctl restart stunnel4 2>/dev/null || true
-fi
+# 2 ── Parar y borrar el puente ─────────────────────────────────────────────
+log "Borrando el puente…"
+$SUDO systemctl disable --now mkc-bridge >/dev/null 2>&1 || true
+$SUDO rm -f "$UNIT" "$BRIDGE_DST"
+$SUDO systemctl daemon-reload 2>/dev/null || true
 
 # 3 ── Reiniciar Moonraker ──────────────────────────────────────────────────
 log "Reiniciando Moonraker…"
