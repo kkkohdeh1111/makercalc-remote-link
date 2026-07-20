@@ -33,8 +33,8 @@ Moonraker manda los datos en claro **de un programa a otro dentro de tu placa**
 
 ```bash
 cd ~
-git clone https://github.com/makercalc/remote-link
-cd remote-link
+git clone https://github.com/kkkohdeh1111/makercalc-remote-link
+cd makercalc-remote-link
 cat install.sh        # leelo primero
 ./install.sh
 ```

@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────
 # MakerCalc Remote Link — instalador del puente seguro
 #
-#   git clone https://github.com/makercalc/remote-link
-#   cd remote-link && ./install.sh
+#   git clone https://github.com/kkkohdeh1111/makercalc-remote-link
+#   cd makercalc-remote-link && ./install.sh
 #
 # Para impresoras con un Moonraker viejo que no habla TLS. Levanta un puente
 # local (stunnel): Moonraker conecta en claro a 127.0.0.1 —dentro de la placa,
