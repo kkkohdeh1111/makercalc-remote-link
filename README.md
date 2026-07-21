@@ -4,7 +4,7 @@ Conecta tu impresora a [MakerCalc](https://makercalc.app) cuando tu Moonraker es
 una versión vieja que **no habla TLS** (cifrado).
 
 Es un instalador chico y transparente. **Leelo antes de correrlo** — el puente
-son ~40 líneas de Python (`mkc-bridge.py`), stdlib pura.
+(`mkc-bridge.py`) es Python stdlib puro, sin dependencias.
 
 ## ¿Qué hace?
 
@@ -17,10 +17,16 @@ ningún paquete — usa el `python3` que ya tenés):
    `mqtt.makercalc.app:8883`, verificando el certificado del broker
 4. Apunta Moonraker al puente (cambia `address` y `port` **solo** dentro de
    `[mqtt]`), con backup en `moonraker.conf.mkc-bak`
-5. Reinicia Moonraker
+5. **No reinicia Moonraker** — en placas MKS/Elegoo eso brickea la pantalla.
+   El cambio se activa con **un reinicio normal de la impresora**, una vez.
 
 Moonraker manda los datos en claro **de un programa a otro dentro de tu placa**
 (nunca salen a la red); recién al salir a internet van sellados.
+
+El puente **aguanta la red al arranque** (hold+retry): si al boot la red todavía
+no tiene ruta, no suelta la conexión de Moonraker — espera y reintenta hasta
+~45s, así Moonraker conecta a la primera y no se "cuelga" nunca. Se autorepara
+en cada arranque, sin tocar nada ni reiniciar Moonraker.
 
 ## ¿Qué NO hace?
 
@@ -42,14 +48,17 @@ cat install.sh        # leelo primero
 > Primero pegá el bloque `[mqtt]` de MakerCalc en tu `moonraker.conf` (desde la
 > web → *Conectar impresora*). El instalador lo necesita para funcionar.
 
+Al terminar, **reiniciá la impresora una vez** (apagá/prendé, o Reboot desde tu
+UI) para activar. Desde ahí conecta sola, en cada arranque — sin tocar nada más.
+
 ## Deshacer
 
 ```bash
 ./uninstall.sh
 ```
 
-Restaura tu `moonraker.conf` desde el backup, borra el puente y reinicia. Tu
-impresora queda **exactamente** como estaba.
+Restaura tu `moonraker.conf` desde el backup y borra el puente (**no** reinicia
+Moonraker). Reiniciá la impresora una vez y queda **exactamente** como estaba.
 
 ## ¿Por qué confiar en esto?
 

@@ -96,18 +96,27 @@ log "Puente activo: 127.0.0.1:${LOCAL_PORT}  →  mqtt.makercalc.app:8883 (TLS)"
 # 4 ── Apuntar Moonraker al puente (solo dentro de [mqtt]) ───────────────────
 log "Apuntando Moonraker al puente (backup en ${CONF}.mkc-bak)…"
 $SUDO cp "$CONF" "${CONF}.mkc-bak"
+# Reescribe address/port/enable_tls SOLO dentro de [mqtt]. El temp va en el
+# MISMO dir del config (no /tmp world-readable: el config tiene el token) y se
+# aplica con un mv atómico (nunca queda un config a medio escribir).
 $SUDO awk -v lp="$LOCAL_PORT" '
   /^\[/ { sec = $0 }
   sec == "[mqtt]" && /^address:/    { print "address: 127.0.0.1"; next }
   sec == "[mqtt]" && /^port:/       { print "port: " lp;          next }
   sec == "[mqtt]" && /^enable_tls:/ { print "enable_tls: False";  next }
   { print }
-' "$CONF" > /tmp/mkc-moonraker.tmp && $SUDO cp /tmp/mkc-moonraker.tmp "$CONF" && rm -f /tmp/mkc-moonraker.tmp
+' "$CONF" | $SUDO tee "${CONF}.mkc-new" >/dev/null
+$SUDO mv "${CONF}.mkc-new" "$CONF"
 
-# 5 ── Reiniciar Moonraker ──────────────────────────────────────────────────
-log "Reiniciando Moonraker…"
-$SUDO systemctl restart moonraker 2>/dev/null || $SUDO systemctl restart moonraker.service 2>/dev/null || true
-
+# 5 ── Listo. NO reiniciamos Moonraker ──────────────────────────────────────
+# En placas MKS/Elegoo, reiniciar Moonraker con la pantalla ya conectada la
+# BRICKEA. El cambio de config se activa con UN reinicio normal de la placa,
+# que es screen-safe (arranca todo fresco). El puente aguanta la red al boot
+# (hold+retry), así Moonraker conecta a la primera y no se rinde nunca.
 echo
-log "¡Listo! Tu impresora aparecerá conectada en MakerCalc en unos segundos."
-log "Para deshacer todo:  ./uninstall.sh"
+log "¡Listo! Falta UN paso: reiniciá la impresora una vez para activar."
+log ""
+log "  → Apagá y prendé la impresora (o Reboot / Restart Firmware desde tu UI)."
+log ""
+log "Al volver aparecerá conectada en MakerCalc sola — y así en cada arranque."
+log "Para deshacer todo:  ./uninstall.sh (y reiniciar una vez)."

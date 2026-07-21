@@ -9,16 +9,20 @@
 # No instala nada. Verifica el certificado del broker contra las CA del
 # sistema (create_default_context: check_hostname + CERT_REQUIRED).
 #
-# Robustez (2026-07-20):
+# Robustez:
 #   · IP del broker CACHEADO en un thread de fondo (con reintento al boot).
-#     Resolver DNS por-conexión es lento/frágil en placas viejas con DNS frío
-#     al arranque: armar el upstream tardaba más que el timeout de CONNACK de
-#     Moonraker → la conexión se caía a los ~6s sin completar. Con el IP
-#     cacheado cada conexión arranca al instante. El TLS se sigue verificando
-#     contra el HOSTNAME (server_hostname), así el cert se valida igual.
+#     Resolver DNS por-conexión es lento/frágil en placas viejas con DNS frío.
+#     El TLS se sigue verificando contra el HOSTNAME (server_hostname).
 #   · settimeout(None) en los sockets del relay: create_connection deja un
-#     timeout de 20s pegado que cortaba la conexión en gaps de idle (>20s sin
-#     tráfico del broker). Un relay persistente no debe tener ese timeout.
+#     timeout de 20s pegado que cortaba la conexión en gaps de idle.
+#   · HOLD + RETRY del upstream (clave, 2026-07-21): al boot la red tarda en
+#     tener ruta. Si cerráramos el socket de Moonraker al primer fallo, el
+#     Moonraker viejo ve una caída y NO reintenta (bug conocido) → el dato se
+#     congela hasta un `restart moonraker` que BRICKEA la pantalla en placas
+#     MKS/Elegoo. En vez: aguantamos el socket de Moonraker hasta ~45s
+#     (dentro de su keepalive de 60s) reintentando el upstream. Cuando la red
+#     sube, relayamos → Moonraker conecta a la PRIMERA, nunca ve una caída,
+#     nunca se rinde. Cero restart de Moonraker, se autorepara en cada boot.
 # ─────────────────────────────────────────────────────────────────────────
 import socket
 import ssl
@@ -31,6 +35,10 @@ LISTEN_PORT = 1883
 BROKER_HOST = "mqtt.makercalc.app"
 BROKER_PORT = 8883
 DNS_REFRESH_S = 300
+# Cuánto aguantar el socket de Moonraker mientras la red sube. DEBE ser menor
+# que el keepalive MQTT de Moonraker (paho default 60s) para que él no corte.
+UPSTREAM_HOLD_S = 45
+RETRY_EVERY_S = 1.5
 
 _ctx = ssl.create_default_context()
 
@@ -62,6 +70,23 @@ def _dns_worker():
             time.sleep(3)
 
 
+def _connect_upstream():
+    # Intenta armar el upstream TLS al broker, aguantando hasta UPSTREAM_HOLD_S.
+    # Devuelve el socket TLS, o None si tras la espera la red sigue caída.
+    deadline = time.monotonic() + UPSTREAM_HOLD_S
+    while time.monotonic() < deadline:
+        ip = _get_ip()
+        if ip is not None:
+            try:
+                raw = socket.create_connection((ip, BROKER_PORT), timeout=10)
+                raw.settimeout(None)  # relay persistente: sin timeout de idle
+                return _ctx.wrap_socket(raw, server_hostname=BROKER_HOST)
+            except Exception:
+                pass  # red no lista / refused / TLS: reintentar sin cerrar al cliente
+        time.sleep(RETRY_EVERY_S)
+    return None
+
+
 def _pipe(src, dst):
     try:
         while True:
@@ -79,28 +104,19 @@ def _pipe(src, dst):
 
 
 def _handle(client):
-    ip = _get_ip()
-    if ip is None:
-        # cache aún frío (primeros segundos post-boot): resolver on-demand
-        try:
-            ip = socket.gethostbyname(BROKER_HOST)
-            _set_ip(ip)
-        except OSError as exc:
-            sys.stderr.write("[mkc-bridge] sin DNS: %s\n" % exc)
-            sys.stderr.flush()
-            client.close()
-            return
-    upstream = None
-    try:
-        raw = socket.create_connection((ip, BROKER_PORT), timeout=20)
-        raw.settimeout(None)  # relay persistente: sin timeout de idle
-        upstream = _ctx.wrap_socket(raw, server_hostname=BROKER_HOST)
-        upstream.settimeout(None)
-    except Exception as exc:
-        sys.stderr.write("[mkc-bridge] upstream error: %s\n" % exc)
+    # NO cerramos el socket de Moonraker al primer fallo: lo aguantamos mientras
+    # la red sube (hold+retry). El CONNECT que Moonraker ya mandó queda en el
+    # buffer del socket y se relaya intacto cuando el upstream conecta.
+    upstream = _connect_upstream()
+    if upstream is None:
+        sys.stderr.write("[mkc-bridge] upstream no disponible tras espera; cierro\n")
         sys.stderr.flush()
-        client.close()
+        try:
+            client.close()
+        except OSError:
+            pass
         return
+    upstream.settimeout(None)
     client.settimeout(None)
     t1 = threading.Thread(target=_pipe, args=(client, upstream), daemon=True)
     t2 = threading.Thread(target=_pipe, args=(upstream, client), daemon=True)
@@ -124,12 +140,15 @@ def main():
     srv.bind((LISTEN_HOST, LISTEN_PORT))
     srv.listen(16)
     sys.stdout.write(
-        "[mkc-bridge] escuchando %s:%d  ->  %s:%d (TLS, IP cacheado)\n"
-        % (LISTEN_HOST, LISTEN_PORT, BROKER_HOST, BROKER_PORT)
+        "[mkc-bridge] escuchando %s:%d  ->  %s:%d (TLS, IP cacheado, hold %ds)\n"
+        % (LISTEN_HOST, LISTEN_PORT, BROKER_HOST, BROKER_PORT, UPSTREAM_HOLD_S)
     )
     sys.stdout.flush()
     while True:
-        client, _ = srv.accept()
+        try:
+            client, _ = srv.accept()
+        except OSError:
+            continue  # error transitorio de accept: no matar el loop
         threading.Thread(target=_handle, args=(client,), daemon=True).start()
 
 

@@ -37,8 +37,8 @@ $SUDO systemctl disable --now mkc-bridge >/dev/null 2>&1 || true
 $SUDO rm -f "$UNIT" "$BRIDGE_DST"
 $SUDO systemctl daemon-reload 2>/dev/null || true
 
-# 3 ── Reiniciar Moonraker ──────────────────────────────────────────────────
-log "Reiniciando Moonraker…"
-$SUDO systemctl restart moonraker 2>/dev/null || $SUDO systemctl restart moonraker.service 2>/dev/null || true
-
-log "Listo. Tu impresora quedó como antes del puente."
+# 3 ── NO reiniciamos Moonraker ─────────────────────────────────────────────
+# Reiniciar Moonraker brickea la pantalla en placas MKS/Elegoo. El cambio se
+# aplica con un reinicio normal de la impresora (screen-safe).
+log "Listo. Reiniciá la impresora una vez para aplicar (screen-safe)."
+log "Tu config quedó como antes del puente."
